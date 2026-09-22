@@ -1,0 +1,116 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'helm/**'
+      - 'k8s/**'
+      - '*.md'
+      - '.gitignore'
+      - '.dockerignore'
+
+  workflow_dispatch:
+
+env:
+  REGISTRY: k3d-registry.localhost:5000
+  IMAGE_TAG: java-${{ github.sha }}
+
+jobs:
+  build-and-push:
+    name: Build and Push to Registry
+    runs-on: self-hosted
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+
+      - name: Build with Maven (Dockerized)
+        run: |
+          docker run --rm `
+            -v "${{ github.workspace }}:/workspace" `
+            -v "$env:USERPROFILE\.m2:/root/.m2" `
+            -w /workspace `
+            maven:3.9-eclipse-temurin-21 `
+            mvn -B -pl task-service,event-service,notification-service -am clean package -DskipTests
+
+
+      - name: Build and push task-service
+        run: |
+          docker run --rm `
+            -v "${{ github.workspace }}:/workspace" `
+            -w /workspace `
+            gcr.io/kaniko-project/executor:latest `
+            --context=/workspace `
+            --dockerfile=/workspace/task-service/Dockerfile `
+            --destination=${{ env.REGISTRY }}/task-service:${{ env.IMAGE_TAG }} `
+            --destination=${{ env.REGISTRY }}/task-service:java-latest `
+            --cache=true `
+            --cache-repo=${{ env.REGISTRY }}/task-service-cache `
+            --insecure `
+            --skip-tls-verify
+
+      # ============================================================
+      # KANIKO BUILD: event-service
+      # ============================================================
+      - name: Build and push event-service
+        run: |
+          docker run --rm `
+            -v "${{ github.workspace }}:/workspace" `
+            -w /workspace `
+            gcr.io/kaniko-project/executor:latest `
+            --context=/workspace `
+            --dockerfile=/workspace/event-service/Dockerfile `
+            --destination=${{ env.REGISTRY }}/event-service:${{ env.IMAGE_TAG }} `
+            --destination=${{ env.REGISTRY }}/event-service:java-latest `
+            --cache=true `
+            --cache-repo=${{ env.REGISTRY }}/event-service-cache `
+            --insecure `
+            --skip-tls-verify
+
+      # ============================================================
+      # KANIKO BUILD: notification-service
+      # ============================================================
+      - name: Build and push notification-service
+        run: |
+          docker run --rm `
+            -v "${{ github.workspace }}:/workspace" `
+            -w /workspace `
+            gcr.io/kaniko-project/executor:latest `
+            --context=/workspace `
+            --dockerfile=/workspace/notification-service/Dockerfile `
+            --destination=${{ env.REGISTRY }}/notification-service:${{ env.IMAGE_TAG }} `
+            --destination=${{ env.REGISTRY }}/notification-service:java-latest `
+            --cache=true `
+            --cache-repo=${{ env.REGISTRY }}/notification-service-cache `
+            --insecure `
+            --skip-tls-verify
+
+      # ============================================================
+      # UPDATE HELM VALUES
+      # ============================================================
+      - name: Update Helm values with new tag
+        run: |
+          (Get-Content helm/task-service/values.yaml) -replace 'tag:.*', "tag: ${{ env.IMAGE_TAG }}" | Set-Content helm/task-service/values.yaml
+          (Get-Content helm/event-service/values.yaml) -replace 'tag:.*', "tag: ${{ env.IMAGE_TAG }}" | Set-Content helm/event-service/values.yaml
+          (Get-Content helm/notification-service/values.yaml) -replace 'tag:.*', "tag: ${{ env.IMAGE_TAG }}" | Set-Content helm/notification-service/values.yaml
+
+
+      - name: Commit and push Helm changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/*/values.yaml
+          git diff --staged --quiet; if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: update image tag to ${{ env.IMAGE_TAG }} [skip ci]"
+            git push
+          } else {
+            Write-Host "No changes to commit"
+          }
