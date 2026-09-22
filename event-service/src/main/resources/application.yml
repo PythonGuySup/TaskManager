@@ -1,0 +1,41 @@
+server:
+  port: 8002
+
+spring:
+  application:
+    name: event-service
+
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://eventuser:eventpass@mongodb:27017/eventdb?authSource=admin}
+
+  kafka:
+    bootstrap-servers: ${KAFKA_HOST:kafka}:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+
+kafka:
+  topic:
+    tasks: tasks
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics    
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true                               
+
+logging:
+  level:
+    ru.kpfu.todo: INFO
+    org.apache.kafka: WARN

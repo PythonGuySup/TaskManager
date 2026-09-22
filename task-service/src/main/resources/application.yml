@@ -1,0 +1,51 @@
+server:
+  port: 8001
+
+spring:
+  application:
+    name: task-service
+
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:postgres}:5432/${POSTGRES_DB:taskdb}
+    username: ${POSTGRES_USER:todouser}
+    password: ${POSTGRES_PASSWORD:todopass}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+
+event-service:
+  url: ${EVENT_SERVICE_URL:http://event-service:8002}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTEL_ENDPOINT:http://jaeger:4318/v1/traces}
+
+logging:
+  level:
+    ru.kpfu.todo: INFO

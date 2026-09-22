@@ -1,0 +1,87 @@
+replicaCount: 2
+
+image:
+  repository: localhost:5000/task-service
+  tag: "java-1.0.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8001
+  targetPort: 8001
+
+containerPort: 8001
+
+env:
+  # --- Spring Boot ---
+  SERVER_PORT: "8001"
+  JAVA_OPTS: "-Xms256m -Xmx512m -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
+
+  # --- PostgreSQL (короткое имя работает, если pod в том же namespace) ---
+  POSTGRES_HOST: postgres-postgresql
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: taskdb
+  POSTGRES_USER: todouser
+  POSTGRES_PASSWORD: todopass
+
+  # --- Redis ---
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+
+  # --- Event Service ---
+  EVENT_SERVICE_URL: "http://event-service:8002"
+
+  # --- OpenTelemetry (Jaeger в istio-system) ---
+  OTEL_ENDPOINT: "http://jaeger.istio-system:4318/v1/traces"
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "384Mi"
+  limits:
+    cpu: "1000m"
+    memory: "768Mi"
+
+livenessProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: 8001
+  initialDelaySeconds: 40
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8001
+  initialDelaySeconds: 30
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: 8001
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  failureThreshold: 20
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 50
+  targetMemoryUtilizationPercentage: 70
+
+serviceMonitor:
+  enabled: true
+  path: /actuator/prometheus
+  interval: 15s
+  port: 8001
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/path: "/actuator/prometheus"
+  prometheus.io/port: "8001"

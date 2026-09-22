@@ -1,0 +1,243 @@
+version: "3.9"
+
+services:
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - todo-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    networks:
+      - todo-net
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_USER: todouser
+      POSTGRES_PASSWORD: todopass
+      POSTGRES_DB: taskdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - todo-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todouser -d taskdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:6
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: eventuser
+      MONGO_INITDB_ROOT_PASSWORD: eventpass
+      MONGO_INITDB_DATABASE: eventdb
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - todo-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - todo-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  task-service-1:
+    build:
+      context: .
+      dockerfile: task-service/Dockerfile
+    container_name: task-service-1
+    ports:
+      - "8001:8001"
+    environment:
+      SERVER_PORT: 8001
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: taskdb
+      POSTGRES_USER: todouser
+      POSTGRES_PASSWORD: todopass
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      EVENT_SERVICE_URL: http://event-service:8002
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      event-service:
+        condition: service_started
+    networks:
+      - todo-net
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.task1.rule=PathPrefix(`/tasks`)"
+      - "traefik.http.services.task1.loadbalancer.server.port=8001"
+
+  task-service-2:
+    build:
+      context: .
+      dockerfile: task-service/Dockerfile
+    container_name: task-service-2
+    ports:
+      - "8011:8001"
+    environment:
+      SERVER_PORT: 8001
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: taskdb
+      POSTGRES_USER: todouser
+      POSTGRES_PASSWORD: todopass
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      EVENT_SERVICE_URL: http://event-service:8002
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      event-service:
+        condition: service_started
+    networks:
+      - todo-net
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.task2.rule=PathPrefix(`/tasks`)"
+      - "traefik.http.services.task2.loadbalancer.server.port=8001"
+
+  event-service:
+    build:
+      context: .
+      dockerfile: event-service/Dockerfile
+    container_name: event-service
+    ports:
+      - "8002:8002"
+    environment:
+      SERVER_PORT: 8002
+      KAFKA_HOST: kafka
+      MONGODB_URI: mongodb://eventuser:eventpass@mongodb:27017/eventdb?authSource=admin
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - todo-net
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.event.rule=PathPrefix(`/event`)"
+      - "traefik.http.services.event.loadbalancer.server.port=8002"
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    container_name: notification-service
+    ports:
+      - "8003:8003"
+    environment:
+      SERVER_PORT: 8003
+      KAFKA_HOST: kafka
+      KAFKA_GROUP_ID: notification-group
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - todo-net
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.notification.rule=PathPrefix(`/notify`)"
+      - "traefik.http.services.notification.loadbalancer.server.port=8003"
+
+ 
+
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - todo-net
+
+networks:
+  todo-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:

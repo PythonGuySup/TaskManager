@@ -1,0 +1,42 @@
+server:
+  port: 8003
+
+spring:
+  application:
+    name: notification-service
+
+  kafka:
+    bootstrap-servers: ${KAFKA_HOST:kafka}:9092
+    consumer:
+      group-id: ${KAFKA_GROUP_ID:notification-group}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: "*"
+        spring.json.value.default.type: ru.kpfu.todo.common.dto.EventRequest
+        spring.json.use.type.headers: false
+
+kafka:
+  topic:
+    tasks: ${KAFKA_TOPIC:tasks}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+logging:
+  level:
+    ru.kpfu.todo: INFO
+    org.apache.kafka: WARN

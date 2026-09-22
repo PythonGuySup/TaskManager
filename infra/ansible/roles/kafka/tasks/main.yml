@@ -1,0 +1,57 @@
+- name: Install Strimzi operator
+  kubernetes.core.k8s:
+    state: present
+    src: https://strimzi.io/install/latest?namespace=kafka
+
+- name: Wait for Strimzi operator deployment to be ready
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: kafka
+    name: strimzi-cluster-operator
+  register: strimzi_operator
+  retries: 30
+  delay: 10
+  until: >
+    strimzi_operator.resources is defined and
+    strimzi_operator.resources | length > 0 and
+    strimzi_operator.resources[0].status.readyReplicas is defined and
+    strimzi_operator.resources[0].status.readyReplicas > 0
+
+- name: Wait for Kafka CRD to be established
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: kafkas.kafka.strimzi.io
+  register: crd_status
+  retries: 30
+  delay: 5
+  until:
+    - crd_status.resources | length > 0
+    - crd_status.resources[0].status.conditions | selectattr('type', 'equalto', 'Established') | list | length > 0
+
+- name: Wait for Kafka API to be available
+  kubernetes.core.k8s_info:
+    api_version: kafka.strimzi.io/v1beta2
+    kind: Kafka
+  register: api_check
+  retries: 40
+  delay: 10
+  until:
+    - api_check is not failed
+    - api_check.resources is defined
+
+- name: Deploy Kafka cluster
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ role_path }}/templates/strimzi-install.yaml"
+
+- name: Verify Kafka cluster exists
+  kubernetes.core.k8s_info:
+    api_version: kafka.strimzi.io/v1
+    kind: Kafka
+    name: todo-cluster
+    namespace: kafka
+  register: kafka_check
+  retries: 20
+  delay: 15
+  until: kafka_check.resources | length > 0
